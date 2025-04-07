@@ -55,7 +55,11 @@ Add the following to your `claude_desktop_config.json`:
 }
 ```
 
-You can limit the number of available tools if you wish. For example:
+You can limit the number of tools exposed to the MCP client. This is useful if you want to optimize token usage or your MCP client has a limit on the number of tools.
+
+Tools are grouped by their "API group", and you can pass the groups you want to expose as tools. Possible values: `apps, builds, workspaces, webhooks, build-artifacts, group-roles, cache-items, pipelines, account, read-only`.
+
+Example configuration:
 ```json
 {
   "mcpServers": {
