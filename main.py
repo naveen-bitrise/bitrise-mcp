@@ -83,7 +83,6 @@ async def list_apps(
             "Authorization": os.environ.get("BITRISE_TOKEN") or "",
         }
         response = await client.get(url, headers=headers, params=params, timeout=30.0)
-        response.raise_for_status()
         return response.text
 
 
