@@ -26,24 +26,26 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ### Bitrise API Token
-[Create a Bitrise API Token](https://devcenter.bitrise.io/api/authentication) with appropriate permissions:
+[Create a Bitrise API Token](https://devcenter.bitrise.io/api/authentication):
    - Go to your [Bitrise Account Settings/Security](https://app.bitrise.io/me/account/security).
    - Navigate to the "Personal access tokens" section.
-   - Generate a new API token with the required scopes.
    - Copy the generated token.
 
-### Usage with [Claude Desktop](https://claude.ai/download)
-> Read more: https://modelcontextprotocol.io/quickstart/user.
+### Use with [Claude Desktop](https://claude.ai/download)
 
-Add the following to your `claude_desktop_config.json`:
+_This guide uses Claude Desktop as the MCP client, but you can use any other MCP-compatible client and adapt the following config options to your preferred client._
+
+Open Claude settings, then navigate to the Developer tab.
+
+Click _Edit config_. This creates a config file called `claude_desktop_config.json`. Open this file with your preferred editor and add the Bitrise MCP server:
 
 ```json
 {
   "mcpServers": {
     "bitrise": {
-      "command": "<ABSOLUTE_PATH_TO>/uvx",
+      "command": "uvx",
       "env": {
-        "BITRISE_TOKEN": "<YOUR_PAT>"
+        "BITRISE_TOKEN": "<YOUR_TOKEN>"
       },
       "args": [
         "--from",
@@ -54,6 +56,8 @@ Add the following to your `claude_desktop_config.json`:
   }
 }
 ```
+
+Save the config file and restart Claude Desktop. If everything is set up correctly, you should see a hammer icon next to the message composer.
 
 You can limit the number of tools exposed to the MCP client. This is useful if you want to optimize token usage or your MCP client has a limit on the number of tools.
 
