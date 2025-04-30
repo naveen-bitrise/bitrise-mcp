@@ -63,25 +63,33 @@ Save the config file and restart Claude Desktop. If everything is set up correct
 
 Follow the [official guide](https://code.visualstudio.com/blogs/2025/04/07/agentMode) to enable Agent mode in Copilot Chat.
 
-Then, open VSCode's `settings.json`, and add the Bitrise MCP server configuration under the `mcp.servers` key:
+Then, open VSCode's `settings.json` (either the workspace level or the user level settings), and add the Bitrise MCP server configuration under the `mcp.servers` key, and the workspace token input under the `mcp.inputs` key:
 
 ```json
 {
   "mcp": {
-      "servers": {
-          "bitrise": {
-              "command": "uvx",
-              "args": [
-                  "--from",
-                  "git+https://github.com/bitrise-io/bitrise-mcp@v1.0.1",
-                  "bitrise-mcp"
-              ],
-              "type": "stdio",
-              "env": {
-                  "BITRISE_TOKEN": "<YOUR_TOKEN>"
-              },
-          },
+    "inputs": [
+      {
+        "id": "bitrise-workspace-token",
+        "type": "promptString",
+        "description": "Bitrise workspace token",
+        "password": true
       }
+    ],
+    "servers": {
+      "bitrise": {
+        "command": "uvx",
+        "args": [
+          "--from",
+          "git+https://github.com/bitrise-io/bitrise-mcp@v1.0.1",
+          "bitrise-mcp"
+        ],
+        "type": "stdio",
+        "env": {
+          "BITRISE_TOKEN": "${input:bitrise-workspace-token}"
+        }
+      },
+    }
   }
 }
 ```
@@ -101,7 +109,7 @@ Example configuration:
     "bitrise": {
       "command": "uvx",
       "env": {
-        "BITRISE_TOKEN": "<YOUR_PAT>"
+        "BITRISE_TOKEN": "${input:bitrise-workspace-token}"
       },
       "args": [
         "--from",
@@ -110,7 +118,7 @@ Example configuration:
         "--enabled-api-groups",
         "cache-items,pipelines"
       ]
-    }
+    },
   }
 }
 ```
