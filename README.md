@@ -109,7 +109,7 @@ Example configuration:
     "bitrise": {
       "command": "uvx",
       "env": {
-        "BITRISE_TOKEN": "${input:bitrise-workspace-token}"
+        "BITRISE_TOKEN": "<YOUR_PAT>"
       },
       "args": [
         "--from",
