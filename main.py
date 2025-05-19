@@ -1578,7 +1578,7 @@ async def get_potential_testers(
     description="Gives back a list of testers that has been associated with a tester group related to a specific "
                 "connected app.",
 )
-async def get_potential_testers(
+async def get_testers(
     connected_app_id: str = Field(
         description="The uuidV4 identifier of the app the tester group is connected to. This field is mandatory.",
     ),
