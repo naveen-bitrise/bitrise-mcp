@@ -255,7 +255,7 @@ Example configuration:
     - Arguments:
       - `app_slug`: Identifier of the Bitrise app
 
-### Build Artifacts
+### Artifacts
 
 19. `list_artifacts`
     - Get a list of all build artifacts
@@ -287,7 +287,7 @@ Example configuration:
       - `artifact_slug`: Identifier of the artifact
       - `is_public_page_enabled`: Enable public page for the artifact
 
-### Webhooks
+### Outgoing Webhooks
 
 23. `list_outgoing_webhooks`
     - List the outgoing webhooks of an app
@@ -576,7 +576,7 @@ Example configuration:
 
 The Bitrise MCP server organizes tools into API groups that can be enabled or disabled via command-line arguments. The table below shows which API groups each tool belongs to:
 
-| Tool | apps | builds | workspaces | webhooks | build-artifacts | group-roles | cache-items | pipelines | account | read-only | release-management |
+| Tool | apps | builds | workspaces | outgoing-webhooks | artifacts | group-roles | cache-items | pipelines | account | read-only | release-management |
 |------|------|--------|------------|----------|----------------|-------------|-------------|-----------|---------|-----------|-------------------|
 | list_apps | ✅ | | | | | | | | | ✅ | |
 | register_app | ✅ | | | | | | | | | | |
