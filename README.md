@@ -49,7 +49,7 @@ Click _Edit config_. This creates a config file called `claude_desktop_config.js
       },
       "args": [
         "--from",
-        "git+https://github.com/bitrise-io/bitrise-mcp@v1.1.0",
+        "git+https://github.com/bitrise-io/bitrise-mcp@v1.1.1",
         "bitrise-mcp"
       ]
     }
@@ -115,7 +115,7 @@ Example configuration:
       },
       "args": [
         "--from",
-        "git+https://github.com/bitrise-io/bitrise-mcp@v1.1.0",
+        "git+https://github.com/bitrise-io/bitrise-mcp@v1.1.1",
         "bitrise-mcp",
         "--enabled-api-groups",
         "cache-items,pipelines"
