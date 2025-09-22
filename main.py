@@ -20,7 +20,7 @@ parser.add_argument(
     "--enabled-api-groups",
     help="The list of enabled API groups, comma separated",
     type=partial(str.split, sep=","),
-    default="apps,builds,workspaces,webhooks,build-artifacts,group-roles,cache-items,pipelines,account,read-only,release-management",
+    default="apps,builds,workspaces,outgoing-webhooks,artifacts,group-roles,cache-items,pipelines,account,read-only,release-management",
 )
 args = parser.parse_args()
 print(f"Enabled API groups {args.enabled_api_groups}", file=sys.stderr)
