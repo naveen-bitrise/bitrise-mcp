@@ -96,6 +96,30 @@ Then, open VSCode's `settings.json` (either the workspace level or the user leve
 
 Save the configuration. VS Code will automatically recognize the change and load the tools into Copilot Chat.
 
+### Use with [Cursor](https://cursor.com/download)
+
+Add Bitrise MCP to Cursor by copy pasting the following cursor deeplink to your browser.
+
+```
+cursor://anysphere.cursor-deeplink/mcp/install?name=bitrise&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnsiQklUUklTRV9UT0tFTiI6IjxZb3VyX1Rva2VuPiJ9LCJjb21tYW5kIjoidXZ4IC0tZnJvbSBnaXQraHR0cHM6Ly9naXRodWIuY29tL2JpdHJpc2UtaW8vYml0cmlzZS1tY3BAdjEuMC4xIGJpdHJpc2UtbWNwIn0%3D
+```
+Enter Bitrise access token while adding.
+
+
+### Use with [Claude Code](https://www.claude.com/product/claude-code)
+
+Run the following command with your `<bitirse-token>` to add Bitrise MCP Server to Claude Code
+
+```bash
+claude mcp add bitrise \
+  --scope user \
+  --transport stdio \
+  --env BITRISE_TOKEN=<bitrise-token> \
+  -- uvx \
+  --from git+https://github.com/bitrise-io/bitrise-mcp@v1.0.1 \
+  bitrise-mcp
+```
+
 ### Advanced configuration
 
 You can limit the number of tools exposed to the MCP client. This is useful if you want to optimize token usage or your MCP client has a limit on the number of tools.
