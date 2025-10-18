@@ -98,9 +98,7 @@ Save the configuration. VS Code will automatically recognize the change and load
 
 ### Use with [Cursor](https://cursor.com/download)
 
-Add Bitrise MCP to Cursor by clicking on the following cursor [weblink](https://cursor.com/en-US/install-mcp?name=bitrise&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnsiQklUUklTRV9UT0tFTiI6IjxZb3VyX1Rva2VuPiJ9LCJjb21tYW5kIjoidXZ4IC0tZnJvbSBnaXQraHR0cHM6Ly9naXRodWIuY29tL2JpdHJpc2UtaW8vYml0cmlzZS1tY3BAdjEuMS4xIGJpdHJpc2UtbWNwIn0%3D).
-
-Enter Bitrise access token while adding.
+Add Bitrise MCP to Cursor by clicking on the following cursor [weblink](https://cursor.com/en-US/install-mcp?name=bitrise&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnsiQklUUklTRV9UT0tFTiI6IjxZb3VyX1Rva2VuPiJ9LCJjb21tYW5kIjoidXZ4IC0tZnJvbSBnaXQraHR0cHM6Ly9naXRodWIuY29tL2JpdHJpc2UtaW8vYml0cmlzZS1tY3BAdjEuMS4xIGJpdHJpc2UtbWNwIn0%3D). Enter Bitrise access token while adding.
 
 ### Use with [Claude Code](https://www.claude.com/product/claude-code)
 
