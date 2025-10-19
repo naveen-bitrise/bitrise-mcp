@@ -81,7 +81,7 @@ Then, open VSCode's `settings.json` (either the workspace level or the user leve
         "command": "uvx",
         "args": [
           "--from",
-          "git+https://github.com/bitrise-io/bitrise-mcp@v1.0.1",
+          "git+https://github.com/bitrise-io/bitrise-mcp@v1.1.1",
           "bitrise-mcp"
         ],
         "type": "stdio",
@@ -98,13 +98,7 @@ Save the configuration. VS Code will automatically recognize the change and load
 
 ### Use with [Cursor](https://cursor.com/download)
 
-Add Bitrise MCP to Cursor by copy pasting the following cursor deeplink to your browser.
-
-```
-cursor://anysphere.cursor-deeplink/mcp/install?name=bitrise&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnsiQklUUklTRV9UT0tFTiI6IjxZb3VyX1Rva2VuPiJ9LCJjb21tYW5kIjoidXZ4IC0tZnJvbSBnaXQraHR0cHM6Ly9naXRodWIuY29tL2JpdHJpc2UtaW8vYml0cmlzZS1tY3BAdjEuMC4xIGJpdHJpc2UtbWNwIn0%3D
-```
-Enter Bitrise access token while adding.
-
+Add Bitrise MCP to Cursor by clicking on the following cursor [weblink](https://cursor.com/en-US/install-mcp?name=bitrise&config=eyJ0eXBlIjoic3RkaW8iLCJlbnYiOnsiQklUUklTRV9UT0tFTiI6IjxZb3VyX1Rva2VuPiJ9LCJjb21tYW5kIjoidXZ4IC0tZnJvbSBnaXQraHR0cHM6Ly9naXRodWIuY29tL2JpdHJpc2UtaW8vYml0cmlzZS1tY3BAdjEuMS4xIGJpdHJpc2UtbWNwIn0%3D). Enter Bitrise access token while adding.
 
 ### Use with [Claude Code](https://www.claude.com/product/claude-code)
 
@@ -116,7 +110,7 @@ claude mcp add bitrise \
   --transport stdio \
   --env BITRISE_TOKEN=<bitrise-token> \
   -- uvx \
-  --from git+https://github.com/bitrise-io/bitrise-mcp@v1.0.1 \
+  --from git+https://github.com/bitrise-io/bitrise-mcp@v1.1.1 \
   bitrise-mcp
 ```
 
