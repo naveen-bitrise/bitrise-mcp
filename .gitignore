@@ -11,3 +11,12 @@ wheels/
 
 # MyPy cache
 .mypy_cache/
+
+Claude.md*
+debug*
+test*
+test/
+.env
+
+.gitignore
+*.bak

@@ -3,12 +3,17 @@ import os
 import httpx
 import sys
 from functools import partial
-from typing import Any, Dict, List, Union
-from mcp.server.fastmcp import FastMCP
+from typing import Any, Dict, List, Union, Optional
+from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field
 from utils import process_build_log
 
+VERSION = "1.2.0-dev"
 mcp = FastMCP("bitrise")
+
+# Print version immediately when module is loaded
+import sys
+print(f"🚀 Loading Bitrise MCP Server v{VERSION}", file=sys.stderr)
 
 
 BITRISE_API_BASE = "https://api.bitrise.io/v0.1"
@@ -377,51 +382,156 @@ async def list_builds(
 
 @mcp_tool(
     api_groups=["builds"],
-    description="Trigger a new build/pipeline for a specified Bitrise app.",
+    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Optionally stream real-time progress updates.",
 )
 async def trigger_bitrise_build(
     app_slug: str = Field(
         description='Identifier of the Bitrise app (e.g., "d8db74e2675d54c4" or "8eb495d0-f653-4eed-910b-8d6b56cc0ec7")',
     ),
-    branch: str = Field(
-        default="main",
+    branch: Optional[str] = Field(
+        default=None,
         description="The branch to build",
     ),
-    workflow_id: str = Field(
+    workflow_id: Optional[str] = Field(
         default=None,
         description="The workflow to build",
     ),
-    pipeline_id: str = Field(
+    pipeline_id: Optional[str] = Field(
         default=None,
         description="The pipeline to build",
     ),
-    commit_message: str = Field(
+    commit_message: Optional[str] = Field(
         default=None,
         description="The commit message for the build",
     ),
-    commit_hash: str = Field(
+    commit_hash: Optional[str] = Field(
         default=None,
         description="The commit hash for the build",
     ),
+    rebuild_build_slug: Optional[str] = Field(
+        default=None,
+        description="Build slug to rebuild. When provided, fetches original build parameters and rebuilds with the same configuration.",
+    ),
+    stream_progress: bool = Field(
+        default=True,
+        description="Stream real-time build progress updates. When True, monitors build status and streams updates until completion.",
+    ),
+    poll_interval: int = Field(
+        default=30,
+        description="Polling interval in seconds for progress updates (only used when stream_progress=True). Default: 30 seconds.",
+    ),
+    ctx: Context = Field(exclude=True),
 ) -> str:
     url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds"
-    build_params = {"branch": branch}
+    
+    # Handle rebuild logic
+    if rebuild_build_slug:
+        # Fetch original build parameters
+        original_build_url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{rebuild_build_slug}"
+        original_build_response = await call_api("GET", original_build_url)
+        
+        import json
+        try:
+            original_build_data = json.loads(original_build_response)
+            original_params = original_build_data["data"].get("original_build_params", {})
+            
+            # Use original parameters, but allow overrides from function parameters  
+            build_params = {}
+            
+            # Branch: use provided branch, otherwise use original
+            if branch:
+                build_params["branch"] = branch
+            elif original_params.get("branch"):
+                build_params["branch"] = original_params["branch"]
+            
+            # Use original workflow/pipeline if not overridden
+            if not workflow_id and not pipeline_id:
+                if original_params.get("workflow_id"):
+                    build_params["workflow_id"] = original_params["workflow_id"]
+                elif original_params.get("pipeline_id"):
+                    build_params["pipeline_id"] = original_params["pipeline_id"]
+            
+            # Use function parameters if provided, otherwise use original
+            if pipeline_id:
+                build_params["pipeline_id"] = pipeline_id
+            if workflow_id:
+                build_params["workflow_id"] = workflow_id
+            if commit_message:
+                build_params["commit_message"] = commit_message
+            elif original_params.get("commit_message"):
+                build_params["commit_message"] = original_params["commit_message"]
+            if commit_hash:
+                build_params["commit_hash"] = commit_hash
+            elif original_params.get("commit_hash"):
+                build_params["commit_hash"] = original_params["commit_hash"]
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            return f"Failed to parse original build data for rebuild: {e}"
+    else:
+        # Normal build parameters
+        build_params = {"branch": branch or "main"}
 
-    if pipeline_id:
-        build_params["pipeline_id"] = pipeline_id
-    if workflow_id:
-        build_params["workflow_id"] = workflow_id
-    if commit_message:
-        build_params["commit_message"] = commit_message
-    if commit_hash:
-        build_params["commit_hash"] = commit_hash
+        if pipeline_id:
+            build_params["pipeline_id"] = pipeline_id
+        if workflow_id:
+            build_params["workflow_id"] = workflow_id
+        if commit_message:
+            build_params["commit_message"] = commit_message
+        if commit_hash:
+            build_params["commit_hash"] = commit_hash
 
     body = {
         "build_params": build_params,
         "hook_info": {"type": "bitrise"},
     }
 
-    return await call_api("POST", url, body)
+    # Trigger the build
+    build_response = await call_api("POST", url, body)
+    
+    # Extract build_slug and build_number from response for monitoring
+    import json
+    try:
+        build_data = json.loads(build_response)
+        results = build_data.get("results", [])
+        if results:
+            build_slug = results[0].get("build_slug")
+            # Get build number by making an additional API call to the build details
+            if build_slug:
+                build_details_response = await call_api("GET", f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{build_slug}")
+                build_details = json.loads(build_details_response)
+                build_number = build_details["data"].get("build_number", "N/A")
+            else:
+                build_number = "N/A"
+        else:
+            build_slug = None
+            build_number = "N/A"
+    except (json.JSONDecodeError, IndexError, KeyError):
+        build_slug = None
+        build_number = "N/A"
+    
+    # If streaming is not requested, return the trigger response
+    if not stream_progress:
+        return build_response
+    
+    # Validate build_slug for streaming
+    if not build_slug:
+        return f"Build triggered but could not extract build_slug for monitoring: {build_response}"
+    
+    # Stream build progress using MCP progress notifications
+    from streaming import stream_build_progress_with_notifications
+    await stream_build_progress_with_notifications(
+        app_slug, build_slug, poll_interval, ctx, call_api, get_build_log
+    )
+    
+    # Return success after streaming is started
+    return json.dumps({
+        "status": "success",
+        "message": f"Build #{build_number} triggered successfully. Real-time monitoring started.",
+        "build_slug": build_slug,
+        "build_number": build_number,
+        "app_slug": app_slug,
+        "note": "Progress updates will be sent via notifications"
+    }, indent=2)
 
 
 @mcp_tool(
@@ -1575,78 +1685,94 @@ async def get_tester_group(
     url = f"{BITRISE_RM_API_BASE}/connected-apps/{connected_app_id}/tester-groups/{id}"
     return await call_api("GET", url)
 
+# @mcp_tool(
+#     api_groups=["release-management"],
+#     description="Gets a list of potential testers whom can be added as testers to a specific tester group. The list "
+#                 "consists of Bitrise users having access to the related Release Management connected app.",
+# )
+# async def get_potential_testers(
+#     connected_app_id: str = Field(
+#         description="The uuidV4 identifier of the app the tester group is connected to. This field is mandatory.",
+#     ),
+#     id: str = Field(
+#         description="The uuidV4 identifier of the tester group. This field is mandatory.",
+#     ),
+#     items_per_page: int = Field(
+#         default=10,
+#         description="Specifies the maximum number of potential testers to return having access to a specific connected app. Default value is 10.",
+#     ),
+#     page: int = Field(
+#         default=1,
+#         description="Specifies which page should be returned from the whole result set in a paginated scenario. Default value is 1.",
+#     ),
+#     search: str = Field(
+#         default=None,
+#         description="Searches for potential testers based on email or username using a case-insensitive approach.",
+#     ),
+# ) -> str:
+#     params: Dict[str, Union[str, int]] = {}
+#     if items_per_page:
+#         params["items_per_page"] = items_per_page
+#     if page:
+#         params["page"] = page
+#     if search:
+#         params["search"] = search
+
+#     url = f"{BITRISE_RM_API_BASE}/connected-apps/{connected_app_id}/tester-groups/{id}/potential-testers"
+#     return await call_api("GET", url, params=params)
+
+# @mcp_tool(
+#     api_groups=["release-management"],
+#     description="Gives back a list of testers that has been associated with a tester group related to a specific "
+#                 "connected app.",
+# )
+# async def get_testers(
+#     connected_app_id: str = Field(
+#         description="The uuidV4 identifier of the app the tester group is connected to. This field is mandatory.",
+#     ),
+#     tester_group_id: str = Field(
+#         description="The uuidV4 identifier of a tester group. If given, only testers within this specific tester group "
+#                     "will be returned.",
+#     ),
+#     items_per_page: int = Field(
+#         default=10,
+#         description="Specifies the maximum number of testers to be returned that have been added to a tester group "
+#                     "related to the specific connected app.. Default value is 10.",
+#     ),
+#     page: int = Field(
+#         default=1,
+#         description="Specifies which page should be returned from the whole result set in a paginated scenario. Default value is 1.",
+#     ),
+# ) -> str:
+#     params: Dict[str, Union[str, int]] = {}
+#     if tester_group_id:
+#         params["tester_group_id"] = tester_group_id
+#     if items_per_page:
+#         params["items_per_page"] = items_per_page
+#     if page:
+#         params["page"] = page
+
+#     url = f"{BITRISE_RM_API_BASE}/connected-apps/{connected_app_id}/testers"
+#     return await call_api("GET", url, params=params)
+
+
 @mcp_tool(
-    api_groups=["release-management"],
-    description="Gets a list of potential testers whom can be added as testers to a specific tester group. The list "
-                "consists of Bitrise users having access to the related Release Management connected app.",
+    api_groups=["read-only"],
+    description="Get the version information of the Bitrise MCP server.",
 )
-async def get_potential_testers(
-    connected_app_id: str = Field(
-        description="The uuidV4 identifier of the app the tester group is connected to. This field is mandatory.",
-    ),
-    id: str = Field(
-        description="The uuidV4 identifier of the tester group. This field is mandatory.",
-    ),
-    items_per_page: int = Field(
-        default=10,
-        description="Specifies the maximum number of potential testers to return having access to a specific connected app. Default value is 10.",
-    ),
-    page: int = Field(
-        default=1,
-        description="Specifies which page should be returned from the whole result set in a paginated scenario. Default value is 1.",
-    ),
-    search: str = Field(
-        default=None,
-        description="Searches for potential testers based on email or username using a case-insensitive approach.",
-    ),
-) -> str:
-    params: Dict[str, Union[str, int]] = {}
-    if items_per_page:
-        params["items_per_page"] = items_per_page
-    if page:
-        params["page"] = page
-    if search:
-        params["search"] = search
-
-    url = f"{BITRISE_RM_API_BASE}/connected-apps/{connected_app_id}/tester-groups/{id}/potential-testers"
-    return await call_api("GET", url, params=params)
-
-@mcp_tool(
-    api_groups=["release-management"],
-    description="Gives back a list of testers that has been associated with a tester group related to a specific "
-                "connected app.",
-)
-async def get_testers(
-    connected_app_id: str = Field(
-        description="The uuidV4 identifier of the app the tester group is connected to. This field is mandatory.",
-    ),
-    tester_group_id: str = Field(
-        description="The uuidV4 identifier of a tester group. If given, only testers within this specific tester group "
-                    "will be returned.",
-    ),
-    items_per_page: int = Field(
-        default=10,
-        description="Specifies the maximum number of testers to be returned that have been added to a tester group "
-                    "related to the specific connected app.. Default value is 10.",
-    ),
-    page: int = Field(
-        default=1,
-        description="Specifies which page should be returned from the whole result set in a paginated scenario. Default value is 1.",
-    ),
-) -> str:
-    params: Dict[str, Union[str, int]] = {}
-    if tester_group_id:
-        params["tester_group_id"] = tester_group_id
-    if items_per_page:
-        params["items_per_page"] = items_per_page
-    if page:
-        params["page"] = page
-
-    url = f"{BITRISE_RM_API_BASE}/connected-apps/{connected_app_id}/testers"
-    return await call_api("GET", url, params=params)
+async def get_server_version() -> str:
+    """Get the current version of the Bitrise MCP server."""
+    import json
+    return json.dumps({
+        "server_name": "bitrise-mcp-dev",
+        "version": VERSION,
+        "description": "Bitrise MCP server for CI/CD integration"
+    }, indent=2)
 
 
 def main():
+    import sys
+    print(f"🚀 Starting Bitrise MCP Server v{VERSION}", file=sys.stderr)
     mcp.run(transport="stdio")
 
 
