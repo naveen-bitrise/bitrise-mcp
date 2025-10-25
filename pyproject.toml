@@ -1,12 +1,15 @@
 [project]
 name = "bitrise-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bitrise MCP server for CI/CD integration"
 readme = "README.md"
 requires-python = ">=3.12.6"
 scripts = { "bitrise-mcp" = "main:main" }
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "httpx>=0.28.1",
     "mcp[cli]>=1.6.0",
 ]
+
+[tool.setuptools]
+py-modules = ["main"]
