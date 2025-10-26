@@ -545,7 +545,7 @@ async def trigger_bitrise_build(
 
 @mcp_tool(
     api_groups=["builds"],
-    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this tool when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup.",
+    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this tool when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup. REQUIRED: Must provide either current_build_id (to rebuild a failed build) OR workflow_id/pipeline_id (for new build).",
 )
 async def validate_update_fix(
     app_slug: str = Field(
@@ -588,6 +588,14 @@ async def validate_update_fix(
     4. Tracking the build for automatic branch cleanup when complete
     """
     import json
+    
+    # Validate that at least one build configuration is provided
+    if not any([current_build_id, workflow_id, pipeline_id]):
+        return json.dumps({
+            "status": "error",
+            "message": "Must provide either current_build_id (for rebuild) or workflow_id/pipeline_id (for new build)",
+            "suggestion": "Use current_build_id to rebuild a failed build with same config, or specify workflow_id or pipeline_id for a new build"
+        }, indent=2)
     
     # Validate that the path exists and is a git repository
     if not os.path.exists(repo_path):
