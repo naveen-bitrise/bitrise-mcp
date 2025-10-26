@@ -2,6 +2,8 @@ import argparse
 import os
 import httpx
 import sys
+import subprocess
+from datetime import datetime
 from functools import partial
 from typing import Any, Dict, List, Union, Optional
 from mcp.server.fastmcp import FastMCP, Context
@@ -10,6 +12,9 @@ from utils import process_build_log
 
 VERSION = "1.2.0-dev"
 mcp = FastMCP("bitrise")
+
+# Global tracking for temporary branches and their builds
+TEMP_BRANCH_TRACKER = {}
 
 # Print version immediately when module is loaded
 import sys
@@ -64,7 +69,7 @@ async def call_api(method, url: str, body=None, params=None) -> str:
 
 @mcp_tool(
     api_groups=["apps", "read-only"],
-    description="List all the apps available for the authenticated account.",
+    description="List all the apps available for the authenticated account. This tool can also be used when no project context exists and user wants to validate a fix or rebuild - present the apps to user to choose from, then use list_build_workflows to get workflows before triggering build.",
 )
 async def list_apps(
     sort_by: str = Field(
@@ -382,7 +387,7 @@ async def list_builds(
 
 @mcp_tool(
     api_groups=["builds"],
-    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Optionally stream real-time progress updates.",
+    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Use this tool when user asks to 'validate a fix', 'test the changes', 'rebuild', or similar requests. If build logs exist in conversation context, use rebuild_build_slug to rebuild the same configuration. If no build context exists, first use list_build_workflows to get available workflows and ask user to choose. If no project context exists, use list_apps to get projects and ask user to choose project and workflow. Optionally stream real-time progress updates.",
 )
 async def trigger_bitrise_build(
     app_slug: str = Field(
@@ -488,13 +493,14 @@ async def trigger_bitrise_build(
     # Trigger the build
     build_response = await call_api("POST", url, body)
     
-    # Extract build_slug and build_number from response for monitoring
+    # Extract build_slug, build_number and build_url from response for monitoring
     import json
     try:
         build_data = json.loads(build_response)
         results = build_data.get("results", [])
         if results:
             build_slug = results[0].get("build_slug")
+            build_url = results[0].get("build_url")
             # Get build number by making an additional API call to the build details
             if build_slug:
                 build_details_response = await call_api("GET", f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{build_slug}")
@@ -504,9 +510,11 @@ async def trigger_bitrise_build(
                 build_number = "N/A"
         else:
             build_slug = None
+            build_url = None
             build_number = "N/A"
     except (json.JSONDecodeError, IndexError, KeyError):
         build_slug = None
+        build_url = None
         build_number = "N/A"
     
     # If streaming is not requested, return the trigger response
@@ -530,8 +538,161 @@ async def trigger_bitrise_build(
         "build_slug": build_slug,
         "build_number": build_number,
         "app_slug": app_slug,
+        "build_url": build_url,
         "note": "Progress updates will be sent via notifications"
     }, indent=2)
+
+
+@mcp_tool(
+    api_groups=["builds"],
+    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup.",
+)
+async def validate_update_fix(
+    app_slug: str = Field(
+        description='Identifier of the Bitrise app (e.g., "d8db74e2675d54c4" or "8eb495d0-f653-4eed-910b-8d6b56cc0ec7")',
+    ),
+    repo_path: str = Field(
+        description="Path to git repository where the code changes are located. Must be the full path to the directory containing your code and .git folder.",
+    ),
+    current_build_id: Optional[str] = Field(
+        default=None,
+        description="Build slug of the failed build that user is trying to fix. If provided, will use rebuild logic to maintain same configuration.",
+    ),
+    commit_message: Optional[str] = Field(
+        default=None,
+        description="Custom commit message for the temporary commit. If not provided, generates one automatically.",
+    ),
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="The workflow to build (ignored if current_build_id is provided)",
+    ),
+    pipeline_id: Optional[str] = Field(
+        default=None,
+        description="The pipeline to build (ignored if current_build_id is provided)",
+    ),
+    stream_progress: bool = Field(
+        default=True,
+        description="Stream real-time build progress updates.",
+    ),
+    poll_interval: int = Field(
+        default=30,
+        description="Polling interval in seconds for progress updates.",
+    ),
+    ctx: Context = Field(exclude=True),
+) -> str:
+    """
+    Validate code changes by:
+    1. Creating a temporary git commit with current changes
+    2. Pushing to a temporary remote branch (without affecting local state)
+    3. Triggering a Bitrise build with the temporary branch
+    4. Tracking the build for automatic branch cleanup when complete
+    """
+    
+    # Validate that the path exists and is a git repository
+    if not os.path.exists(repo_path):
+        return json.dumps({
+            "status": "error",
+            "message": f"Repository path does not exist: {repo_path}",
+            "suggestion": "Please provide the full path to your git repository"
+        }, indent=2)
+    
+    if not os.path.exists(os.path.join(repo_path, ".git")):
+        return json.dumps({
+            "status": "error",
+            "message": f"Not a git repository: {repo_path}",
+            "suggestion": "Make sure the path points to a directory with a .git folder"
+        }, indent=2)
+    
+    try:
+        # Step 1: Create temporary branch and push changes
+        from streaming import push_temp_branch, cleanup_temp_branch
+        temp_branch_name = await push_temp_branch(repo_path, commit_message, ctx)
+        
+        # Step 2: Trigger build with temporary branch
+        # Use rebuild logic if current_build_id is provided
+        if current_build_id:
+            build_result = await trigger_bitrise_build(
+                app_slug=app_slug,
+                branch=temp_branch_name,
+                rebuild_build_slug=current_build_id,
+                stream_progress=stream_progress,
+                poll_interval=poll_interval,
+                ctx=ctx
+            )
+        else:
+            build_result = await trigger_bitrise_build(
+                app_slug=app_slug,
+                branch=temp_branch_name,
+                workflow_id=workflow_id,
+                pipeline_id=pipeline_id,
+                stream_progress=stream_progress,
+                poll_interval=poll_interval,
+                ctx=ctx
+            )
+        
+        # Step 3: Parse build result and track for cleanup
+        try:
+            build_data = json.loads(build_result)
+            build_slug = build_data.get("build_slug")
+            build_number = build_data.get("build_number")
+            
+            if build_slug:
+                # Track this temp branch for cleanup when build completes
+                TEMP_BRANCH_TRACKER[build_slug] = {
+                    "branch_name": temp_branch_name,
+                    "repo_path": repo_path,
+                    "app_slug": app_slug,
+                    "created_at": datetime.now().isoformat(),
+                    "cleanup_attempted": False,
+                    "original_build": current_build_id
+                }
+                
+                return json.dumps({
+                    "status": "success",
+                    "message": f" Build #{build_number} started with temporary branch '{temp_branch_name}'",
+                    "build_slug": build_slug,
+                    "build_number": build_number,
+                    "app_slug": app_slug,
+                    "build_url": build_data.get("build_url"),
+                    "remote_temp_branch": temp_branch_name,
+                    "temp_branch_note": "Branch will be automatically deleted when build completes",
+                    "local_state": "✅ Your local working directory was not modified",
+                    "repo_path_used": repo_path,
+                    "original_build": current_build_id,
+                    "next_steps": [
+                        "Build progress will be streamed automatically, visible MCP output (not in chat)",
+                        "Temporary branch will be cleaned up when build finishes",
+                        "Check build status by calling/polling get_build tool in one minute intervals"
+                    ]
+                }, indent=2)
+            else:
+                # Cleanup branch immediately if build failed to start
+                await cleanup_temp_branch(temp_branch_name, repo_path, ctx)
+                return json.dumps({
+                    "status": "error", 
+                    "message": "Build was triggered but couldn't extract build information for tracking",
+                    "raw_result": build_result,
+                    "cleanup_status": "Temporary branch cleaned up"
+                }, indent=2)
+                
+        except json.JSONDecodeError:
+            # Cleanup branch if we can't parse the result
+            await cleanup_temp_branch(temp_branch_name, repo_path, ctx)
+            return json.dumps({
+                "status": "error",
+                "message": "Build triggered but response format unexpected",
+                "raw_result": build_result,
+                "cleanup_status": "Temporary branch cleaned up"
+            }, indent=2)
+    
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to validate changes: {str(e)}",
+            "local_state": "✅ Your local working directory was not modified",
+            "repo_path_used": repo_path
+        }, indent=2)
+
 
 
 @mcp_tool(
@@ -638,7 +799,7 @@ async def get_build_bitrise_yml(
 
 @mcp_tool(
     api_groups=["builds", "read-only"],
-    description="List the workflows of an app.",
+    description="List the workflows of an app. This tool can also be used when project context exists but user wants to validate a fix or rebuild and no build context exists in conversation - present the workflows to user to choose from before triggering build.",
 )
 async def list_build_workflows(
     app_slug: str = Field(

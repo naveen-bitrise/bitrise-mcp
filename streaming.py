@@ -6,6 +6,7 @@ Handles real-time build progress updates using MCP streaming.
 import asyncio
 import json
 import os
+import subprocess
 from datetime import datetime
 from typing import Optional
 
@@ -188,8 +189,17 @@ async def monitor_build_progress(app_slug: str, build_slug: str, poll_interval: 
                         total=1.0,
                     )
                     
-                    # Log completion message
-                    await ctx.info(f"Build #{build_number} completed with status: {status_name}")
+                    # Send appropriate completion message
+                    if current_status == 1:  # Success
+                        await ctx.info(f"Build #{build_number} succeeded after {elapsed_str}")
+                    elif current_status == 2:  # Failed
+                        await ctx.info(f"Build #{build_number} failed after {elapsed_str}. Ask Agent to get build logs for Build#{build_number} to see the issue")
+                    else:  # Aborted
+                        await ctx.info(f"Build #{build_number} was aborted after {elapsed_str}")
+                    
+                    # Check if this build has a temporary branch that needs cleanup
+                    await cleanup_temp_branch_if_tracked(build_slug, ctx)
+                    
                     return  # End background monitoring
             
             # Wait before next poll
@@ -205,6 +215,192 @@ async def monitor_build_progress(app_slug: str, build_slug: str, poll_interval: 
         await ctx.report_progress(progress=1.0, total=1.0)
         await ctx.info(f"Error monitoring build: {str(e)}")
         return
+
+
+
+async def push_temp_branch(repo_path: str, commit_message: Optional[str], ctx) -> str:
+    """
+    Push local changes to temporary remote branch without affecting local state.
+    Returns the branch name.
+    """
+    temp_branch = f"temp-build-{int(datetime.now().timestamp())}"
+    
+    if commit_message is None:
+        commit_message = f"Temporary build validation {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    # Check if path is a git repository
+    if not os.path.exists(os.path.join(repo_path, ".git")):
+        raise Exception(f"Not a git repository: {repo_path}")
+    
+    # Check if remote 'origin' exists
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+            raise Exception(f"Remote 'origin' issue in {repo_path}: {error_msg}")
+        
+        remote_url = result.stdout.strip()
+        if not remote_url:
+            raise Exception(f"Remote 'origin' exists but has no URL configured in {repo_path}")
+            
+        await ctx.info(f"📡 Remote origin found: {remote_url}")
+    except subprocess.CalledProcessError as e:
+        raise Exception(f"Git command failed in {repo_path}: {e}")
+    
+    await ctx.info(f"🔧 Creating temporary branch '{temp_branch}' with your changes...")
+    
+    try:
+        # Save current state before making any changes
+        try:
+            original_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                check=True
+            ).stdout.strip()
+        except subprocess.CalledProcessError:
+            await ctx.info("⚠️ Could not check git status, proceeding anyway...")
+            original_status = None
+        
+        staged_files = False
+        try:
+            # Stage all changes
+            subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
+            staged_files = True
+            
+            # Create tree from index
+            tree_sha = subprocess.run(
+                ["git", "write-tree"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            ).stdout.strip()
+            
+            # Get HEAD commit
+            head_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            ).stdout.strip()
+            
+            # Create commit object
+            commit_sha = subprocess.run(
+                ["git", "commit-tree", tree_sha, "-p", head_sha, "-m", commit_message],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            ).stdout.strip()
+            
+            # Reset index to restore local state (CRITICAL - always do this)
+            subprocess.run(["git", "reset"], cwd=repo_path, check=True)
+            staged_files = False  # Successfully reset
+            
+            await ctx.info(f"📤 Pushing temporary branch to remote...")
+            
+            # Push to remote
+            subprocess.run(
+                ["git", "push", "origin", f"{commit_sha}:refs/heads/{temp_branch}"],
+                cwd=repo_path,
+                check=True
+            )
+            
+            await ctx.info(f"✅ Temporary branch '{temp_branch}' pushed successfully")
+            return temp_branch
+            
+        except subprocess.CalledProcessError as e:
+            # Critical: If we staged files but something failed, we must reset
+            if staged_files:
+                try:
+                    await ctx.info("🔧 Cleaning up staged files...")
+                    subprocess.run(["git", "reset"], cwd=repo_path, check=True)
+                    await ctx.info("✅ Staged files cleaned up successfully")
+                except subprocess.CalledProcessError as reset_error:
+                    await ctx.info(f"❌ CRITICAL: Failed to reset staged files! Manual cleanup may be needed: {reset_error}")
+                    raise Exception(f"Git operation failed AND failed to reset staged files. Repository may be in inconsistent state: {reset_error}")
+            
+            await ctx.info(f"❌ Git operation failed: {e}")
+            raise Exception(f"Git operation failed: {e}")
+        
+    except Exception as e:
+        await ctx.info(f"❌ Unexpected error during git operations: {e}")
+        raise
+
+
+async def cleanup_temp_branch(branch_name: str, repo_path: str, ctx) -> bool:
+    """
+    Clean up a temporary branch from remote repository.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        await ctx.info(f"🗑️ Cleaning up temporary branch '{branch_name}'...")
+        
+        subprocess.run(
+            ["git", "push", "origin", "--delete", branch_name],
+            cwd=repo_path,
+            check=True,
+            capture_output=True
+        )
+        
+        await ctx.info(f"✅ Temporary branch '{branch_name}' deleted successfully")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        await ctx.info(f"⚠️ Failed to delete temporary branch '{branch_name}': {e}")
+        return False
+
+
+async def cleanup_temp_branch_if_tracked(build_slug: str, ctx):
+    """
+    Clean up temporary branch if this build was started from validate_update_fix.
+    """
+    try:
+        # Import here to avoid circular dependencies
+        from main import TEMP_BRANCH_TRACKER
+        
+        if build_slug in TEMP_BRANCH_TRACKER:
+            branch_info = TEMP_BRANCH_TRACKER[build_slug]
+            
+            if not branch_info.get("cleanup_attempted", False):
+                branch_name = branch_info["branch_name"]
+                repo_path = branch_info["repo_path"]
+                
+                await ctx.info(f"🗑️ Cleaning up temporary branch '{branch_name}' for completed build...")
+                
+                # Mark as attempted to prevent double cleanup
+                TEMP_BRANCH_TRACKER[build_slug]["cleanup_attempted"] = True
+                
+                try:
+                    subprocess.run(
+                        ["git", "push", "origin", "--delete", branch_name],
+                        cwd=repo_path,
+                        check=True,
+                        capture_output=True
+                    )
+                    
+                    await ctx.info(f"✅ Temporary branch '{branch_name}' deleted successfully")
+                    
+                    # Remove from tracking since cleanup is complete
+                    del TEMP_BRANCH_TRACKER[build_slug]
+                    
+                except subprocess.CalledProcessError as e:
+                    await ctx.info(f"⚠️ Failed to delete temporary branch '{branch_name}': {e}")
+                    # Keep in tracker for potential manual cleanup
+                    
+    except ImportError:
+        # TEMP_BRANCH_TRACKER not available, skip cleanup
+        pass
+    except Exception as e:
+        await ctx.info(f"⚠️ Error during temp branch cleanup: {e}")
 
 
 def get_build_status_description(status_code: Optional[int]) -> str:

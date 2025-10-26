@@ -98,7 +98,7 @@ async def process_build_log(
         else:
             processed_response["note"] = f"Showing the only failed step (step #{failed_step_index})"
     elif get_log_of_failed_step_only and failed_step_count == 0:
-        processed_response["note"] = "No failed steps found. Showing build summary instead."
+        processed_response["note"] = "Build completed successfully. Showing build summary."
     elif enable_log_filtering:
         processed_response["note"] = "Logs filtered using keyword patterns"
     else:
@@ -111,7 +111,7 @@ async def process_build_log(
     # Replace log_chunks with processed content
     processed_response["log_chunks"] = [{"chunk": processed_content, "position": 0}]
     
-    # Remove the raw URL since we've processed the content
+    
     if "expiring_raw_log_url" in processed_response:
         processed_response["expiring_raw_log_url"] = None
     
