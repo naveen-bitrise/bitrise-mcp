@@ -269,6 +269,7 @@ async def push_temp_branch(repo_path: str, commit_message: Optional[str], ctx) -
             original_status = None
         
         staged_files = False
+        remote_pushed = False
         try:
             # Stage all changes
             subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True)
@@ -302,7 +303,8 @@ async def push_temp_branch(repo_path: str, commit_message: Optional[str], ctx) -
             ).stdout.strip()
             
             # Reset index to restore local state (CRITICAL - always do this)
-            subprocess.run(["git", "reset"], cwd=repo_path, check=True)
+            # Use --mixed to unstage files but keep working directory changes
+            subprocess.run(["git", "reset", "--mixed", "HEAD"], cwd=repo_path, check=True)
             staged_files = False  # Successfully reset
             
             await ctx.info(f"📤 Pushing temporary branch to remote...")
@@ -313,23 +315,45 @@ async def push_temp_branch(repo_path: str, commit_message: Optional[str], ctx) -
                 cwd=repo_path,
                 check=True
             )
+            remote_pushed = True  # Track that remote push succeeded
             
             await ctx.info(f"✅ Temporary branch '{temp_branch}' pushed successfully")
             return temp_branch
             
         except subprocess.CalledProcessError as e:
-            # Critical: If we staged files but something failed, we must reset
+            # Critical: Clean up both local and remote state if needed
+            
+            # 1. Clean up staged files if needed
             if staged_files:
                 try:
                     await ctx.info("🔧 Cleaning up staged files...")
-                    subprocess.run(["git", "reset"], cwd=repo_path, check=True)
+                    subprocess.run(["git", "reset", "--mixed", "HEAD"], cwd=repo_path, check=True)
                     await ctx.info("✅ Staged files cleaned up successfully")
                 except subprocess.CalledProcessError as reset_error:
                     await ctx.info(f"❌ CRITICAL: Failed to reset staged files! Manual cleanup may be needed: {reset_error}")
-                    raise Exception(f"Git operation failed AND failed to reset staged files. Repository may be in inconsistent state: {reset_error}")
+                    # Continue to try remote cleanup even if local cleanup failed
+            
+            # 2. Clean up remote branch if it was pushed
+            if remote_pushed:
+                try:
+                    await ctx.info(f"🔧 Cleaning up remote branch '{temp_branch}'...")
+                    subprocess.run(["git", "push", "origin", "--delete", temp_branch], cwd=repo_path, check=True)
+                    await ctx.info(f"✅ Remote branch '{temp_branch}' cleaned up successfully")
+                except subprocess.CalledProcessError as cleanup_error:
+                    await ctx.info(f"⚠️ Failed to delete remote branch '{temp_branch}': {cleanup_error}")
+                    await ctx.info(f"⚠️ Manual cleanup needed: git push origin --delete {temp_branch}")
             
             await ctx.info(f"❌ Git operation failed: {e}")
-            raise Exception(f"Git operation failed: {e}")
+            
+            # If both local and remote cleanup had issues, provide comprehensive error
+            if staged_files and remote_pushed:
+                raise Exception(f"Git operation failed. Repository may need manual cleanup of both local staged files and remote branch '{temp_branch}': {e}")
+            elif staged_files:
+                raise Exception(f"Git operation failed AND failed to reset staged files. Repository may be in inconsistent state: {e}")
+            elif remote_pushed:
+                raise Exception(f"Git operation failed. Remote branch '{temp_branch}' may need manual deletion: {e}")
+            else:
+                raise Exception(f"Git operation failed: {e}")
         
     except Exception as e:
         await ctx.info(f"❌ Unexpected error during git operations: {e}")
@@ -466,7 +490,6 @@ async def test_trigger_bitrise_build(
         original_build_url = f"https://api.bitrise.io/v0.1/apps/{app_slug}/builds/{rebuild_build_slug}"
         original_build_response = await call_api_func("GET", original_build_url)
         
-        import json
         try:
             original_build_response_data = json.loads(original_build_response)
             original_build_data = original_build_response_data.get("data", {})
@@ -536,7 +559,6 @@ async def test_trigger_bitrise_build(
         return build_response
     
     # Extract build_slug from response for monitoring
-    import json
     try:
         build_data = json.loads(build_response)
         build_slug = build_data.get("build_slug")

@@ -387,7 +387,7 @@ async def list_builds(
 
 @mcp_tool(
     api_groups=["builds"],
-    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Use this tool when user asks to 'validate a fix', 'test the changes', 'rebuild', or similar requests. If build logs exist in conversation context, use rebuild_build_slug to rebuild the same configuration. If no build context exists, first use list_build_workflows to get available workflows and ask user to choose. If no project context exists, use list_apps to get projects and ask user to choose project and workflow. Optionally stream real-time progress updates.",
+    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Optionally stream real-time progress updates. Do not call this for validating of testing a fix or update - use validate_update_fix tool instead.",
 )
 async def trigger_bitrise_build(
     app_slug: str = Field(
@@ -545,7 +545,7 @@ async def trigger_bitrise_build(
 
 @mcp_tool(
     api_groups=["builds"],
-    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup.",
+    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this tool when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup.",
 )
 async def validate_update_fix(
     app_slug: str = Field(
@@ -587,6 +587,7 @@ async def validate_update_fix(
     3. Triggering a Bitrise build with the temporary branch
     4. Tracking the build for automatic branch cleanup when complete
     """
+    import json
     
     # Validate that the path exists and is a git repository
     if not os.path.exists(repo_path):
@@ -758,9 +759,9 @@ async def get_build_log(
         try:
             # Default filter patterns for log compaction
             log_filter_patterns = {
-                "xcode": ["error:", "fatal error:", "FAILED", "BUILD FAILED", "ASSERT", "XCTAssert", "Compile error", "Link error", "exception"],
-                "android": ["BUILD FAILED", "FAILURE:", "Error:", "Exception", "Failed to", "Compilation failed"], 
-                "git": ["CONFLICT", "fatal:", "Merge failed", "refusing to merge", "unrelated histories", "Auto-merging", "error:"]
+                "xcode": ["error", "fatal", "FAILED", "BUILD FAILED", "ASSERT", "XCTAssert", "Compile error", "Link error", "exception"],
+                "android": ["BUILD FAILED", "FAILURE", "Error", "Exception", "Failed to", "Compilation failed"], 
+                "git": ["CONFLICT", "fatal", "Merge failed", "refusing to merge", "unrelated histories", "Auto-merging", "error:"]
             }
             
             return await process_build_log(
