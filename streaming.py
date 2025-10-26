@@ -427,6 +427,104 @@ async def cleanup_temp_branch_if_tracked(build_slug: str, ctx):
         await ctx.info(f"⚠️ Error during temp branch cleanup: {e}")
 
 
+# Test version of validate_update_fix without MCP decorators
+async def test_validate_update_fix(
+    app_slug: str,
+    repo_path: str,
+    current_build_id: Optional[str] = None,
+    commit_message: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    pipeline_id: Optional[str] = None,
+    stream_progress: bool = True,
+    poll_interval: int = 30,
+    mock_ctx = None
+) -> str:
+    """
+    Test version of validate_update_fix without MCP dependencies.
+    """
+    import json
+    
+    # Mock context if not provided
+    if mock_ctx is None:
+        class MockCtx:
+            async def info(self, msg): print(f"[INFO] {msg}")
+        mock_ctx = MockCtx()
+    
+    # Validate that at least one build configuration is provided
+    if not any([current_build_id, workflow_id, pipeline_id]):
+        return json.dumps({
+            "status": "error",
+            "message": "Must provide either current_build_id (for rebuild) or workflow_id/pipeline_id (for new build)",
+            "suggestion": "Use current_build_id to rebuild a failed build with same config, or specify workflow_id or pipeline_id for a new build"
+        }, indent=2)
+    
+    # Validate that the path exists and is a git repository
+    if not os.path.exists(repo_path):
+        return json.dumps({
+            "status": "error",
+            "message": f"Repository path does not exist: {repo_path}",
+            "suggestion": "Please provide the full path to your git repository"
+        }, indent=2)
+    
+    if not os.path.exists(os.path.join(repo_path, ".git")):
+        return json.dumps({
+            "status": "error",
+            "message": f"Not a git repository: {repo_path}",
+            "suggestion": "Make sure the path points to a directory with a .git folder"
+        }, indent=2)
+    
+    try:
+        # Step 1: Create temporary branch and push changes
+        temp_branch_name = await push_temp_branch(repo_path, commit_message, mock_ctx)
+        
+        print(f"🔍 DEBUG: About to call build trigger with:")
+        print(f"  app_slug: {app_slug}")
+        print(f"  branch: {temp_branch_name}")
+        print(f"  current_build_id: {current_build_id}")
+        print(f"  workflow_id: {workflow_id}")
+        print(f"  pipeline_id: {pipeline_id}")
+        
+        # Step 2: Debug parameter analysis
+        if current_build_id:
+            print(f"🔄 Would use rebuild logic with build_slug: {current_build_id}")
+            print(f"🔍 DEBUG: current_build_id type: {type(current_build_id)}")
+            print(f"🔍 DEBUG: current_build_id repr: {repr(current_build_id)}")
+            print(f"🔍 DEBUG: current_build_id length: {len(current_build_id) if current_build_id else 0}")
+            if 'annotation=' in str(current_build_id):
+                print(f"⚠️  FOUND ISSUE: current_build_id contains 'annotation='!")
+        else:
+            print(f"🚀 Would use new build logic with workflow: {workflow_id}, pipeline: {pipeline_id}")
+        
+        # Clean up temp branch since this is just a test
+        await cleanup_temp_branch(temp_branch_name, repo_path, mock_ctx)
+        
+        return json.dumps({
+            "status": "test_completed",
+            "message": "Test function completed without MCP errors",
+            "parameters_received": {
+                "current_build_id": current_build_id,
+                "workflow_id": workflow_id,
+                "pipeline_id": pipeline_id,
+                "current_build_id_type": str(type(current_build_id)),
+                "current_build_id_repr": repr(current_build_id)
+            }
+        }, indent=2)
+        
+    except Exception as e:
+        # Emergency cleanup if something failed
+        if 'temp_branch_name' in locals():
+            try:
+                await cleanup_temp_branch(temp_branch_name, repo_path, mock_ctx)
+            except:
+                pass
+        
+        return json.dumps({
+            "status": "error",
+            "message": f"Test function failed: {str(e)}",
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
 def get_build_status_description(status_code: Optional[int]) -> str:
     """Get human-readable build status description."""
     status_map = {

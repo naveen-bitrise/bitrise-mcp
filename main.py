@@ -620,6 +620,7 @@ async def validate_update_fix(
         # Step 2: Trigger build with temporary branch
         # Use rebuild logic if current_build_id is provided
         if current_build_id:
+            await ctx.info(f"🔄 Taking REBUILD path with current_build_id: '{current_build_id}' (type: {type(current_build_id)})")
             build_result = await trigger_bitrise_build(
                 app_slug=app_slug,
                 branch=temp_branch_name,
@@ -629,6 +630,7 @@ async def validate_update_fix(
                 ctx=ctx
             )
         else:
+            await ctx.info(f"🚀 Taking NEW BUILD path with workflow_id: '{workflow_id}', pipeline_id: '{pipeline_id}' (current_build_id is: '{current_build_id}')")
             build_result = await trigger_bitrise_build(
                 app_slug=app_slug,
                 branch=temp_branch_name,
