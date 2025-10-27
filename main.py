@@ -427,120 +427,22 @@ async def trigger_bitrise_build(
     ),
     ctx: Context = Field(exclude=True),
 ) -> str:
-    url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds"
-    
-    # Handle rebuild logic
-    if rebuild_build_slug:
-        # Fetch original build parameters
-        original_build_url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{rebuild_build_slug}"
-        original_build_response = await call_api("GET", original_build_url)
-        
-        import json
-        try:
-            original_build_data = json.loads(original_build_response)
-            original_params = original_build_data["data"].get("original_build_params", {})
-            
-            # Use original parameters, but allow overrides from function parameters  
-            build_params = {}
-            
-            # Branch: use provided branch, otherwise use original
-            if branch:
-                build_params["branch"] = branch
-            elif original_params.get("branch"):
-                build_params["branch"] = original_params["branch"]
-            
-            # Use original workflow/pipeline if not overridden
-            if not workflow_id and not pipeline_id:
-                if original_params.get("workflow_id"):
-                    build_params["workflow_id"] = original_params["workflow_id"]
-                elif original_params.get("pipeline_id"):
-                    build_params["pipeline_id"] = original_params["pipeline_id"]
-            
-            # Use function parameters if provided, otherwise use original
-            if pipeline_id:
-                build_params["pipeline_id"] = pipeline_id
-            if workflow_id:
-                build_params["workflow_id"] = workflow_id
-            if commit_message:
-                build_params["commit_message"] = commit_message
-            elif original_params.get("commit_message"):
-                build_params["commit_message"] = original_params["commit_message"]
-            if commit_hash:
-                build_params["commit_hash"] = commit_hash
-            elif original_params.get("commit_hash"):
-                build_params["commit_hash"] = original_params["commit_hash"]
-                
-        except (json.JSONDecodeError, KeyError) as e:
-            return f"Failed to parse original build data for rebuild: {e}"
-    else:
-        # Normal build parameters
-        build_params = {"branch": branch or "main"}
-
-        if pipeline_id:
-            build_params["pipeline_id"] = pipeline_id
-        if workflow_id:
-            build_params["workflow_id"] = workflow_id
-        if commit_message:
-            build_params["commit_message"] = commit_message
-        if commit_hash:
-            build_params["commit_hash"] = commit_hash
-
-    body = {
-        "build_params": build_params,
-        "hook_info": {"type": "bitrise"},
-    }
-
-    # Trigger the build
-    build_response = await call_api("POST", url, body)
-    
-    # Extract build_slug, build_number and build_url from response for monitoring
-    import json
-    try:
-        build_data = json.loads(build_response)
-        results = build_data.get("results", [])
-        if results:
-            build_slug = results[0].get("build_slug")
-            build_url = results[0].get("build_url")
-            # Get build number by making an additional API call to the build details
-            if build_slug:
-                build_details_response = await call_api("GET", f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{build_slug}")
-                build_details = json.loads(build_details_response)
-                build_number = build_details["data"].get("build_number", "N/A")
-            else:
-                build_number = "N/A"
-        else:
-            build_slug = None
-            build_url = None
-            build_number = "N/A"
-    except (json.JSONDecodeError, IndexError, KeyError):
-        build_slug = None
-        build_url = None
-        build_number = "N/A"
-    
-    # If streaming is not requested, return the trigger response
-    if not stream_progress:
-        return build_response
-    
-    # Validate build_slug for streaming
-    if not build_slug:
-        return f"Build triggered but could not extract build_slug for monitoring: {build_response}"
-    
-    # Stream build progress using MCP progress notifications
-    from streaming import stream_build_progress_with_notifications
-    await stream_build_progress_with_notifications(
-        app_slug, build_slug, poll_interval, ctx, call_api, get_build_log
+    # Use the internal function to avoid nested tool call issues
+    from streaming import trigger_build_internal
+    return await trigger_build_internal(
+        app_slug=app_slug,
+        branch=branch,
+        workflow_id=workflow_id,
+        pipeline_id=pipeline_id,
+        commit_message=commit_message,
+        commit_hash=commit_hash,
+        rebuild_build_slug=rebuild_build_slug,
+        stream_progress=stream_progress,
+        poll_interval=poll_interval,
+        ctx=ctx,
+        call_api_func=call_api,
+        get_build_log_func=get_build_log
     )
-    
-    # Return success after streaming is started
-    return json.dumps({
-        "status": "success",
-        "message": f"Build #{build_number} triggered successfully. Real-time monitoring started.",
-        "build_slug": build_slug,
-        "build_number": build_number,
-        "app_slug": app_slug,
-        "build_url": build_url,
-        "note": "Progress updates will be sent via notifications"
-    }, indent=2)
 
 
 @mcp_tool(
@@ -617,28 +519,34 @@ async def validate_update_fix(
         from streaming import push_temp_branch, cleanup_temp_branch
         temp_branch_name = await push_temp_branch(repo_path, commit_message, ctx)
         
-        # Step 2: Trigger build with temporary branch
-        # Use rebuild logic if current_build_id is provided
+        # Step 2: Trigger build with temporary branch using internal function
+        # This avoids the MCP nested tool call issue
+        from streaming import trigger_build_internal
+        
         if current_build_id:
             await ctx.info(f"🔄 Taking REBUILD path with current_build_id: '{current_build_id}' (type: {type(current_build_id)})")
-            build_result = await trigger_bitrise_build(
+            build_result = await trigger_build_internal(
                 app_slug=app_slug,
                 branch=temp_branch_name,
                 rebuild_build_slug=current_build_id,
                 stream_progress=stream_progress,
                 poll_interval=poll_interval,
-                ctx=ctx
+                ctx=ctx,
+                call_api_func=call_api,
+                get_build_log_func=get_build_log
             )
         else:
             await ctx.info(f"🚀 Taking NEW BUILD path with workflow_id: '{workflow_id}', pipeline_id: '{pipeline_id}' (current_build_id is: '{current_build_id}')")
-            build_result = await trigger_bitrise_build(
+            build_result = await trigger_build_internal(
                 app_slug=app_slug,
                 branch=temp_branch_name,
                 workflow_id=workflow_id,
                 pipeline_id=pipeline_id,
                 stream_progress=stream_progress,
                 poll_interval=poll_interval,
-                ctx=ctx
+                ctx=ctx,
+                call_api_func=call_api,
+                get_build_log_func=get_build_log
             )
         
         # Step 3: Parse build result and track for cleanup

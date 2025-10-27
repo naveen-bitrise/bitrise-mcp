@@ -525,6 +525,150 @@ async def test_validate_update_fix(
         }, indent=2)
 
 
+# Core build triggering logic moved from main.py to avoid nested tool call issues
+async def trigger_build_internal(
+    app_slug: str,
+    branch: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    pipeline_id: Optional[str] = None,
+    commit_message: Optional[str] = None,
+    commit_hash: Optional[str] = None,
+    rebuild_build_slug: Optional[str] = None,
+    stream_progress: bool = True,
+    poll_interval: int = 30,
+    ctx = None,
+    call_api_func = None,
+    get_build_log_func = None
+) -> str:
+    """
+    Internal function for triggering Bitrise builds.
+    This avoids the MCP nested tool call issue.
+    """
+    import json
+    
+    # Validate and sanitize rebuild_build_slug to prevent Field annotation corruption
+    if rebuild_build_slug and ('annotation=' in str(rebuild_build_slug) or len(rebuild_build_slug) < 10):
+        if ctx:
+            await ctx.info(f"⚠️ Detected corrupted rebuild_build_slug parameter, ignoring: {rebuild_build_slug}")
+        rebuild_build_slug = None
+    
+    BITRISE_API_BASE = "https://api.bitrise.io/v0.1"
+    url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds"
+    
+    # Handle rebuild logic
+    if rebuild_build_slug:
+        if ctx:
+            await ctx.info(f"🔄 Fetching original build parameters from: {rebuild_build_slug}")
+        
+        # Fetch original build parameters
+        original_build_url = f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{rebuild_build_slug}"
+        original_build_response = await call_api_func("GET", original_build_url)
+        
+        try:
+            original_build_data = json.loads(original_build_response)
+            original_params = original_build_data["data"].get("original_build_params", {})
+            
+            # Use original parameters, but allow overrides from function parameters  
+            build_params = {}
+            
+            # Branch: use provided branch, otherwise use original
+            if branch:
+                build_params["branch"] = branch
+            elif original_params.get("branch"):
+                build_params["branch"] = original_params["branch"]
+            
+            # Use original workflow/pipeline if not overridden
+            if not workflow_id and not pipeline_id:
+                if original_params.get("workflow_id"):
+                    build_params["workflow_id"] = original_params["workflow_id"]
+                elif original_params.get("pipeline_id"):
+                    build_params["pipeline_id"] = original_params["pipeline_id"]
+            
+            # Use function parameters if provided, otherwise use original
+            if pipeline_id:
+                build_params["pipeline_id"] = pipeline_id
+            if workflow_id:
+                build_params["workflow_id"] = workflow_id
+            if commit_message:
+                build_params["commit_message"] = commit_message
+            elif original_params.get("commit_message"):
+                build_params["commit_message"] = original_params["commit_message"]
+            if commit_hash:
+                build_params["commit_hash"] = commit_hash
+            elif original_params.get("commit_hash"):
+                build_params["commit_hash"] = original_params["commit_hash"]
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            return f"Failed to parse original build data for rebuild: {e}"
+    else:
+        # Normal build parameters
+        build_params = {"branch": branch or "main"}
+
+        if pipeline_id:
+            build_params["pipeline_id"] = pipeline_id
+        if workflow_id:
+            build_params["workflow_id"] = workflow_id
+        if commit_message:
+            build_params["commit_message"] = commit_message
+        if commit_hash:
+            build_params["commit_hash"] = commit_hash
+
+    body = {
+        "build_params": build_params,
+        "hook_info": {"type": "bitrise"},
+    }
+
+    # Trigger the build
+    build_response = await call_api_func("POST", url, body)
+    
+    # Extract build_slug, build_number and build_url from response for monitoring
+    try:
+        build_data = json.loads(build_response)
+        results = build_data.get("results", [])
+        if results:
+            build_slug = results[0].get("build_slug")
+            build_url = results[0].get("build_url")
+            # Get build number by making an additional API call to the build details
+            if build_slug:
+                build_details_response = await call_api_func("GET", f"{BITRISE_API_BASE}/apps/{app_slug}/builds/{build_slug}")
+                build_details = json.loads(build_details_response)
+                build_number = build_details["data"].get("build_number", "N/A")
+            else:
+                build_number = "N/A"
+        else:
+            build_slug = None
+            build_url = None
+            build_number = "N/A"
+    except (json.JSONDecodeError, IndexError, KeyError):
+        build_slug = None
+        build_url = None
+        build_number = "N/A"
+    
+    # If streaming is not requested, return the trigger response
+    if not stream_progress:
+        return build_response
+    
+    # Validate build_slug for streaming
+    if not build_slug:
+        return f"Build triggered but could not extract build_slug for monitoring: {build_response}"
+    
+    # Stream build progress using MCP progress notifications
+    await stream_build_progress_with_notifications(
+        app_slug, build_slug, poll_interval, ctx, call_api_func, get_build_log_func
+    )
+    
+    # Return success after streaming is started
+    return json.dumps({
+        "status": "success",
+        "message": f"Build #{build_number} triggered successfully. Real-time monitoring started.",
+        "build_slug": build_slug,
+        "build_number": build_number,
+        "app_slug": app_slug,
+        "build_url": build_url,
+        "note": "Progress updates will be sent via notifications"
+    }, indent=2)
+
+
 def get_build_status_description(status_code: Optional[int]) -> str:
     """Get human-readable build status description."""
     status_map = {
