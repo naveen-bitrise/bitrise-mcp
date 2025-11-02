@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field
 from utils import process_build_log
 
-VERSION = "1.2.0-dev"
+VERSION = "1.2.2-dev"
 mcp = FastMCP("bitrise")
 
 # Global tracking for temporary branches and their builds
@@ -69,7 +69,7 @@ async def call_api(method, url: str, body=None, params=None) -> str:
 
 @mcp_tool(
     api_groups=["apps", "read-only"],
-    description="List all the apps available for the authenticated account. This tool can also be used when no project context exists and user wants to validate a fix or rebuild - present the apps to user to choose from, then use list_build_workflows to get workflows before triggering build.",
+    description="List all the apps available for the authenticated account.",
 )
 async def list_apps(
     sort_by: str = Field(
@@ -384,72 +384,11 @@ async def list_builds(
         response.raise_for_status()
         return response.text
 
-
 @mcp_tool(
     api_groups=["builds"],
-    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Optionally stream real-time progress updates. Do not call this for validating of testing a fix or update - use validate_update_fix tool instead.",
+    description="Validate code changes (or updates or fix) by pushing to a temporary branch and triggering a build. Use this tool when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup. REQUIRED: Must provide either current_build_id (to rebuild a failed build) OR workflow_id/pipeline_id (for new build).",
 )
-async def trigger_bitrise_build(
-    app_slug: str = Field(
-        description='Identifier of the Bitrise app (e.g., "d8db74e2675d54c4" or "8eb495d0-f653-4eed-910b-8d6b56cc0ec7")',
-    ),
-    branch: Optional[str] = Field(
-        default=None,
-        description="The branch to build",
-    ),
-    workflow_id: Optional[str] = Field(
-        default=None,
-        description="The workflow to build",
-    ),
-    pipeline_id: Optional[str] = Field(
-        default=None,
-        description="The pipeline to build",
-    ),
-    commit_message: Optional[str] = Field(
-        default=None,
-        description="The commit message for the build",
-    ),
-    commit_hash: Optional[str] = Field(
-        default=None,
-        description="The commit hash for the build",
-    ),
-    rebuild_build_slug: Optional[str] = Field(
-        default=None,
-        description="Build slug to rebuild. When provided, fetches original build parameters and rebuilds with the same configuration.",
-    ),
-    stream_progress: bool = Field(
-        default=True,
-        description="Stream real-time build progress updates. When True, monitors build status and streams updates until completion.",
-    ),
-    poll_interval: int = Field(
-        default=30,
-        description="Polling interval in seconds for progress updates (only used when stream_progress=True). Default: 30 seconds.",
-    ),
-    ctx: Context = Field(exclude=True),
-) -> str:
-    # Use the internal function to avoid nested tool call issues
-    from streaming import trigger_build_internal
-    return await trigger_build_internal(
-        app_slug=app_slug,
-        branch=branch,
-        workflow_id=workflow_id,
-        pipeline_id=pipeline_id,
-        commit_message=commit_message,
-        commit_hash=commit_hash,
-        rebuild_build_slug=rebuild_build_slug,
-        stream_progress=stream_progress,
-        poll_interval=poll_interval,
-        ctx=ctx,
-        call_api_func=call_api,
-        get_build_log_func=get_build_log
-    )
-
-
-@mcp_tool(
-    api_groups=["builds"],
-    description="Validate code changes by pushing to a temporary branch and triggering a build. Use this tool when user asks to 'validate this fix', 'test these changes', or 'check if this works'. This tool handles git operations safely without affecting your local working directory, then triggers a build with the changes and monitors it with automatic cleanup. REQUIRED: Must provide either current_build_id (to rebuild a failed build) OR workflow_id/pipeline_id (for new build).",
-)
-async def validate_update_fix(
+async def validate_code_changes(
     app_slug: str = Field(
         description='Identifier of the Bitrise app (e.g., "d8db74e2675d54c4" or "8eb495d0-f653-4eed-910b-8d6b56cc0ec7")',
     ),
@@ -579,9 +518,9 @@ async def validate_update_fix(
                     "repo_path_used": repo_path,
                     "original_build": current_build_id,
                     "next_steps": [
-                        "Build progress will be streamed automatically, visible MCP output (not in chat)",
-                        "Temporary branch will be cleaned up when build finishes",
-                        "Check build status by calling/polling get_build tool in one minute intervals"
+                        "Let user know the build has started successfully.",
+                        "User can monitor build progress using notifications, visible in output panel (not in chat)",
+                        "User can trigger get_build tool *after* build completes to see results"
                     ]
                 }, indent=2)
             else:
@@ -612,6 +551,65 @@ async def validate_update_fix(
             "repo_path_used": repo_path
         }, indent=2)
 
+
+@mcp_tool(
+    api_groups=["builds"],
+    description="Trigger a new build/pipeline or Rebuild an existing one, for a specified Bitrise app. Optionally stream real-time progress updates. For validating code changes or fixes, use the validate_code_changes tool instead.",
+)
+async def trigger_bitrise_build(
+    app_slug: str = Field(
+        description='Identifier of the Bitrise app (e.g., "d8db74e2675d54c4" or "8eb495d0-f653-4eed-910b-8d6b56cc0ec7")',
+    ),
+    branch: Optional[str] = Field(
+        default=None,
+        description="The branch to build",
+    ),
+    workflow_id: Optional[str] = Field(
+        default=None,
+        description="The workflow to build",
+    ),
+    pipeline_id: Optional[str] = Field(
+        default=None,
+        description="The pipeline to build",
+    ),
+    commit_message: Optional[str] = Field(
+        default=None,
+        description="The commit message for the build",
+    ),
+    commit_hash: Optional[str] = Field(
+        default=None,
+        description="The commit hash for the build",
+    ),
+    rebuild_build_slug: Optional[str] = Field(
+        default=None,
+        description="Build slug to rebuild. When provided, fetches original build parameters and rebuilds with the same configuration.",
+    ),
+    stream_progress: bool = Field(
+        default=True,
+        description="Stream real-time build progress updates. When True, monitors build status and streams updates until completion.",
+    ),
+    poll_interval: int = Field(
+        default=30,
+        description="Polling interval in seconds for progress updates (only used when stream_progress=True). Default: 30 seconds.",
+    ),
+    ctx: Context = Field(exclude=True),
+) -> str:
+    # Use the internal function to avoid nested tool call issues
+    from streaming import trigger_build_internal
+    return await trigger_build_internal(
+        app_slug=app_slug,
+        branch=branch,
+        workflow_id=workflow_id,
+        pipeline_id=pipeline_id,
+        commit_message=commit_message,
+        commit_hash=commit_hash,
+        rebuild_build_slug=rebuild_build_slug,
+        stream_progress=stream_progress,
+        poll_interval=poll_interval,
+        ctx=ctx,
+        call_api_func=call_api,
+        get_build_log_func=get_build_log
+    )
 
 
 @mcp_tool(
@@ -718,7 +716,7 @@ async def get_build_bitrise_yml(
 
 @mcp_tool(
     api_groups=["builds", "read-only"],
-    description="List the workflows of an app. This tool can also be used when project context exists but user wants to validate a fix or rebuild and no build context exists in conversation - present the workflows to user to choose from before triggering build.",
+    description="List the workflows of an app.",
 )
 async def list_build_workflows(
     app_slug: str = Field(
